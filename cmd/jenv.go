@@ -17,18 +17,26 @@ package cmd
 
 import (
 	"fmt"
-
-	"path/filepath"
-
-	"os"
-
-	"strings"
-
 	"io/fs"
 	"io/ioutil"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
+
+type FullFileInfo struct {
+	directory string
+	fileInfo  fs.FileInfo
+}
+
+func (fullFileInfo FullFileInfo) String() string {
+	return filepath.Join(fullFileInfo.directory, fullFileInfo.fileInfo.Name())
+}
+
+const JAVA_HOME_ENV = "JAVA_HOME"
 
 // jenvCmd represents the jenv command
 var jenvCmd = &cobra.Command{
@@ -43,19 +51,51 @@ to quickly create a Cobra application.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("jenv called")
 
-		jdkInstallationDirectory := os.Getenv("JAVA_HOME")
+		jdkInstallationDirectory := os.Getenv(JAVA_HOME_ENV)
 
 		// get the flag value, its default value is false
 		flist, _ := cmd.Flags().GetBool("list")
+		fsetVersion, _ := cmd.Flags().GetBool("set-version")
 
 		if flist {
 			listAllJdkInstallations(jdkInstallationDirectory)
+		} else if fsetVersion {
+			setJavaHomeWithJdkInstallation(jdkInstallationDirectory, 0)
 		} else {
-			fmt.Println("JAVA_HOME: " + jdkInstallationDirectory)
+			fmt.Println(JAVA_HOME_ENV, ": "+jdkInstallationDirectory)
 			fmt.Println("To see all available options, run `go-env --help`")
 		}
-
 	},
+}
+
+func setJavaHomeWithJdkInstallation(jdkInstallationDirectory string, index int) {
+
+	javaDirectory := filepath.Dir(jdkInstallationDirectory)
+	fmt.Println("Parent directory: " + javaDirectory)
+
+	fullDirectoryInfoList, err := getFilesList(javaDirectory)
+	if err != nil {
+		panic(err)
+	}
+
+	selectedJdkFullFileInfo := fullDirectoryInfoList[index]
+	fmt.Println("Going to use the java installation: ", selectedJdkFullFileInfo)
+
+	osSpecificCommand := getOsSpecificSetCommand(selectedJdkFullFileInfo)
+
+	fmt.Println("Please use the below commmand to set jdk version")
+	fmt.Println(osSpecificCommand)
+}
+
+func getOsSpecificSetCommand(selectedJdkFullFileInfo FullFileInfo) string {
+	switch runtime.GOOS {
+	case "windows":
+		return fmt.Sprint("SETX ", JAVA_HOME_ENV, " \""+selectedJdkFullFileInfo.String()+"\"")
+	case "linux":
+		return fmt.Sprint("export ", JAVA_HOME_ENV, " \""+selectedJdkFullFileInfo.String()+"\"")
+	default:
+		panic("Not yet supported" + runtime.GOOS)
+	}
 }
 
 func listAllJdkInstallations(jdkInstallationDirectory string) {
@@ -63,21 +103,21 @@ func listAllJdkInstallations(jdkInstallationDirectory string) {
 	javaDirectory := filepath.Dir(jdkInstallationDirectory)
 	fmt.Println("Parent directory: " + javaDirectory)
 
-	directoryList, err := getFilesList(javaDirectory)
+	fullDirectoryInfoList, err := getFilesList(javaDirectory)
 	if err != nil {
 		panic(err)
 	}
 
 	fmt.Println("All available java installations -")
 
-	for index, jdkDirectory := range directoryList {
-		fmt.Println(index, ": ", jdkDirectory.Name())
+	for index, fullJdkDirectoryInfo := range fullDirectoryInfoList {
+		fmt.Println(index, ": ", fullJdkDirectoryInfo)
 	}
 }
 
-func getFilesList(root string) ([]fs.FileInfo, error) {
+func getFilesList(root string) ([]FullFileInfo, error) {
 
-	var files []fs.FileInfo
+	var files []FullFileInfo
 	fileInfo, err := ioutil.ReadDir(root)
 	if err != nil {
 		return files, err
@@ -85,7 +125,7 @@ func getFilesList(root string) ([]fs.FileInfo, error) {
 
 	for _, file := range fileInfo {
 		if strings.Contains(file.Name(), "jdk") {
-			files = append(files, file)
+			files = append(files, FullFileInfo{directory: root, fileInfo: file})
 		}
 	}
 	return files, nil
@@ -101,4 +141,5 @@ func init() {
 	// jenvCmd.PersistentFlags().String("foo", "", "A help for foo")
 
 	jenvCmd.Flags().BoolP("list", "l", false, "List available jdk installations")
+	jenvCmd.Flags().BoolP("set-version", "s", false, "Set jdk installations as JAVA_HOME")
 }
